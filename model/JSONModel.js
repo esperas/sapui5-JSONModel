@@ -1,26 +1,90 @@
-jQuery.sap.declare("bluefin.shared.model.JSONModel");
+jQuery.sap.declare("ecole.shared.model.JSONModel");
 jQuery.sap.require("sap.ui.model.json.JSONModel");
 
-sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
+sap.ui.model.json.JSONModel.extend("ecole.shared.model.JSONModel", {
 
-	mError : {},
+	// Variable globale a l'ensemble des objets de type ecole.shared.model.JSONModel
+    mError : {},
 
-	constructor : function(sServiceUrl){
+    mLogon : { "username" : null, "password" : null},
+
+ 	constructor : function(sServiceUrl, sParams){
 		sap.ui.model.json.JSONModel.apply(this, []);
 
-		if(sServiceUrl){
+        // Variable spécifique à chaque objet
+        this.mPromise = null;
+        this.mAdditional = { "sModelPath" : '/', "aResponseProperty" : null, "isFile" : null, "bReturnArray" : null, "aSorter" : null };
+        this.fnAfterLoad = null;
+        this.promises = [];
+        this.fnPromisesAll = null;
+        this.isFile = null;
+        this.sResponse = null;
+
+        if (arguments[0]){
+            console.log(arguments[0])
+        }
+        if (arguments[1]){
+            if (arguments[1]['sModelPath']){
+                this.mAdditional.sModelPath = arguments[1].sModelPath;
+            }
+            if (arguments[1]['aResponseProperty']){
+                this.mAdditional.aResponseProperty = arguments[1].aResponseProperty;
+            } else {
+                this.mAdditional.aResponseProperty = null;
+            }
+            if (arguments[1]['isFile']){
+                this.mAdditional.isFile = arguments[1].isFile;
+            }
+
+        }
+        if (sServiceUrl){
+            this.setUrl(sServiceUrl);
+        }
+	},
+
+    setFnAfterLoad : function(fnAfter) {
+      if (fnAfter) {
+          this.fnAfterLoad = fnAfter;
+      }
+    },
+    setFnPromisesAll : function(fnAfter){
+      if (fnAfter) {
+        Promise.all(this.promises).then(fnAfter);
+      }
+    },
+
+    getPromise : function(){
+      return this.mPromise;
+    },
+
+    /**
+	 * Chargement des données via l'API -REST
+	 * store the resulting JSON data in the model against the sModelPath node
+	 * of the model.
+	 */
+    setUrl : function(sServiceUrl){
+        if(sServiceUrl){
 			// determine the service base url and strip off any parameters
-			if (sServiceUrl.indexOf("?") == -1) {
+			//if (sServiceUrl.indexOf("?") == -1) {
 				this.sServiceUrl = sServiceUrl;
-			} else {
-				var aUrlParts = sServiceUrl.split("?");
-				this.sServiceUrl = aUrlParts[0];
-			}
+			//} else {
+			//	var aUrlParts = sServiceUrl.split("?");
+			//	this.sServiceUrl = aUrlParts[0];
+			//}
 
 			// Remove trailing slash (if any)
 			this.sServiceUrl = this.sServiceUrl.replace(/\/$/, "");
 		}
-	},
+    },
+
+    getUrl : function(){
+      return this.sServiceUrl;
+    },
+
+    setLogon : function(sLogon) {
+        this.mLogon.username = sLogon.username;
+        this.mLogon.password = sLogon.password;
+    },
 
 	/**
 	 * Load JSON-encoded data from the server using a GET HTTP request and
@@ -61,17 +125,36 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 	 * @param {object} [mHeaders] An object of additional header key/value
 	 * 		pairs to send along with the request
 	**/
-	loadDataFromPath : function(sPath, mAdditional, oParameters, bAsync, sType, bMerge, bCache, mHeaders){
+	loadDataFromPath : function(fnSuccess, sPath, mAdditional, oParameters, bAsync, sType, bMerge, bCache, mHeaders){
 		var that = this;
 
-		var sModelPath = mAdditional.sModelPath;
-		var aResponseProperty = mAdditional.aResponseProperty;
-		var bReturnArray = mAdditional.bReturnArray;
-		var aSorter = mAdditional.aSorter;
+        if ((!fnSuccess)&&(this.fnAfterLoad)){
+            fnSuccess = this.fnAfterLoad;
+        }
+
+        console.log('Call API', this.sServiceUrl)
+		if (mAdditional){
+          var sModelPath        = mAdditional.sModelPath;
+		  var aResponseProperty = mAdditional.aResponseProperty;
+		  var bReturnArray      = mAdditional.bReturnArray;
+		  var aSorter           = mAdditional.aSorter;
+        } else {
+          var sModelPath        = this.mAdditional.sModelPath;
+		  var aResponseProperty = this.mAdditional.aResponseProperty;
+		  var bReturnArray      = this.mAdditional.bReturnArray;
+		  var aSorter           = this.mAdditional.aSorter;
+        }
 
 		// If the path doesn't have a leading slash, add one
-		sPath = sPath.charAt(0) !== "/" ? "/" + sPath : sPath; 
-		var sURL = this.sServiceUrl + sPath; //the root URL plus the path
+		if (sPath) {
+            if ((sPath.charAt(0) !== "?")&&(sPath.charAt(0) !== "/")) {
+                sPath = "/" + sPath;
+            }
+            //sPath = sPath.charAt(0) !== "/" ? "/" + sPath : sPath;
+		  var sUrl = this.sServiceUrl + sPath; //the root URL plus the path
+        } else {
+            var sUrl = this.sServiceUrl;
+        }
 
 		sModelPath = sModelPath || sPath;
 		bAsync = (bAsync !== false);
@@ -79,7 +162,7 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 		bCache = bCache === undefined ? this.bCache : bCache;
 
 		this.fireRequestSent({
-			url : sURL, 
+			url : sUrl,
 			type : sType, 
 			async : bAsync, 
 			headers: mHeaders,
@@ -88,15 +171,31 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 		});
 
 		// Make an AJAX request on the path + the serviceUrl
-		this._ajax({
-			url: sURL,
-			async: bAsync,
-			dataType: 'json',
-			cache: bCache,
-			data: oParameters,
-			headers: mHeaders,
-			type: sType,
-			success: function(oData, sResult, response) {
+
+        //this._ajax({
+        //this.mPromise = $.Deferred(function( defer ) {
+        if (sUrl.indexOf("?") == -1){
+            sUrl = sUrl + "?=unique" + new Date().getTime();
+        } else {
+            sUrl = sUrl + "&=unique" + new Date().getTime();
+        }
+        this.mPromise =  $.ajax({
+			 url: sUrl,
+			 async: bAsync,
+             dataType: 'json',
+			 cache: bCache,
+			 data: oParameters,
+             beforeSend: function (xhr) {
+                 if (that.mLogon.username){
+                    xhr.setRequestHeader ("Authorization", "Basic " + btoa(that.mLogon.username + ":" + that.mLogon.password));
+                 }
+             },
+             xhrFields: {
+                 withCredentials: true
+             },
+			 headers: mHeaders,
+			 type: sType,
+			 success: function(oData, sResult, response) {
 				that.mError = {};
 				if (!oData) {
 					jQuery.sap.log.fatal("The following problem occurred: No data was retrieved by service: " + sURL);
@@ -119,7 +218,9 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 					//Put the non-array data into an array
 					oData = [ oData ];
 				}
-
+                if (typeof fnSuccess === 'function') {
+                    oData = fnSuccess(oData);
+                }
 				// Sort the results
 				try{
 					if(aSorter.length >= 1){
@@ -134,14 +235,12 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 					var x_csrf_token = response.getResponseHeader("x-csrf-token") || response.getResponseHeader("X-CSRF-Token");
 					if(x_csrf_token){ // If we have a csrf token, store it on “this”
 						that["x-csrf-token"] = x_csrf_token;
-						if(mHeaders.hasOwnProperty("X-CSRF-Token")){ 
-
+						if(mHeaders.hasOwnProperty("X-CSRF-Token")){
 							// If it was requested, store it on the JSON model
 							that.setProperty("/CSRF", x_csrf_token);
 						}
 					}
 				}catch(err){
-
 					// No CSRF token found....or requested
 				}
 
@@ -158,7 +257,7 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 				// Set the response JSON on the model, at the model path provided
 				that.setProperty(sModelPath, oData);
 				that.fireRequestCompleted({
-					url : sURL,
+					url : sUrl,
 					type : sType,
 					async : bAsync,
 					headers: mHeaders,
@@ -166,8 +265,11 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 					infoObject: {cache : bCache, merge : bMerge},
 					success: true
 				});
+
+                console.log(sUrl, 'Succes', oData)
+                //defer.resolve();
 			},
-			error: function(XMLHttpRequest, textStatus, errorThrown){
+			 error: function(XMLHttpRequest, textStatus, errorThrown){
 
 				// Use standard OData model error handling code
 				var oError = { message : textStatus, statusCode : XMLHttpRequest.status, statusText : XMLHttpRequest.statusText, responseText : XMLHttpRequest.responseText};
@@ -177,10 +279,12 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 				jQuery.sap.log.fatal("The following problem occurred: " + textStatus, XMLHttpRequest.responseText + ","
 														 + XMLHttpRequest.status + "," + XMLHttpRequest.statusText);
 
-				that.fireRequestCompleted({url : sURL, type : sType, async : bAsync, headers: mHeaders,
+				that.fireRequestCompleted({url : sUrl, type : sType, async : bAsync, headers: mHeaders,
 					 info : "cache=" + bCache + ";bMerge=" + bMerge, infoObject: {cache : bCache, merge : bMerge}, success: false, errorobject: oError});
 				that.fireRequestFailed(oError);
+                //defer.resolve();
 			}
+            //})
 		});
 
 	},
@@ -240,7 +344,7 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 	 * @public
 	 */
 	update : function(sPath, oData, mParameters, mHeaders){
-		this._genericWriteRequest(sPath, oData, mParameters, "PUT", mHeaders);
+		this._genericWriteRequest(sPath, oData, mParameters, "PATCH", mHeaders);
 	},
 
 	remove : function(sPath, oData, mParameters, mHeaders){
@@ -273,12 +377,20 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 			that 		= mParameters.context;
 		}
 
-		if(oData){
-			body = JSON.stringify(oData);
-		}
 
-		var sPath = sPath.charAt(0) !== "/" ? "/" + sPath : sPath; // If the path doesn't have a leading slash, add one
-		var sURL = this.sServiceUrl + sPath; // The root URL plus the path
+            if ((this.mAdditional.isFile)&&(sType=='POST')){
+                body = oData;
+            }  else {
+                body = JSON.stringify(oData);
+            }
+
+        if (sPath) {
+		  sPath = sPath.charAt(0) !== "/" ? "/" + sPath : sPath; // If the path doesn't have a leading slash, add one
+        var sURL = this.sServiceUrl + sPath; // The root URL plus the path
+        } else {
+        var sURL = this.sServiceUrl;
+        }
+
 
 		this.fireRequestSent({
 			url : sURL,
@@ -287,17 +399,56 @@ sap.ui.model.json.JSONModel.extend("bluefin.shared.model.JSONModel", {
 			headers: mHeaders,
 		});
 
-		this._ajax({
-			type: sType,
-			contentType : "application/json",
-			url: sURL,
-			dataType: 'json',
-			async: bAsync,
-			data: body,
-			headers: mHeaders,
-			success: fnSuccess.bind(that),
-			error: fnError.bind(that)
-		});
+        var sPromise;
+
+        if ((this.mAdditional.isFile)&&(sType=='POST')){
+            sPromise = $.ajax({
+                url : sURL,
+                type : 'POST',              // Assuming creation of an entity
+                contentType : false,        // To force multipart/form-data
+                beforeSend: function (xhr) {
+                    xhr.setRequestHeader ("Authorization", "Basic " + btoa(that.mLogon.username + ":" + that.mLogon.password));
+                },
+                xhrFields: {
+                    withCredentials: true
+                },
+                mimeType: "multipart/form-data",
+                data : oData,
+                processData : false,
+                success : function(oData, sResult, response){
+                    console.log('Retour du POST fichier', oData, sResult, response);
+                    try{
+
+						that.sResponse = oData['idFile'];
+
+				    }catch(err){
+					// If we cannot get these bits out of the oData object then the structure of the return is not right for us
+					jQuery.sap.log.fatal("The following problem occurred: Unrecognisable data was retrieved by service: " + sURL);
+				    }
+                }
+            });
+
+        } else {
+
+            sPromise = $.ajax({
+			 url: sURL,
+			 async: bAsync,
+             contentType : "application/json",
+             dataType: 'json',
+             data: body,
+             beforeSend: function (xhr) {
+                 xhr.setRequestHeader ("Authorization", "Basic " + btoa(that.mLogon.username + ":" + that.mLogon.password));
+             },
+             xhrFields: {
+                 withCredentials: true
+             },
+			 headers: mHeaders,
+			 type: sType
+        });
+
+
+        }
+        this.promises.push(sPromise);
 	},
 
 	// Sort an array of data, using an Array of Sorter objects, usually used on an OData model
